@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: data languages
 ;; Homepage: https://github.com/maxi/saneql
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "25.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -24,21 +24,6 @@
 ;; - C-c C-c compiles the buffer, runs the given sql against the database and displays the output in a new buffer
 ;; - C-u C-c C-c compiles and runs the buffer up to the current line
 ;;
-;;  Example Buffer:
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;; saneql-db: ~/dev/tpch-sqlite/tpch.db -*-
-;; -- the above line sets the input database for evaluation
-;; let base := '1993-10-01',
-;; let basedate(add := '+0 seconds') := foreigncall('date', date, {base, add}),
-;; orders
-;; .filter(o_orderdate >= basedate() && o_orderdate < basedate(add := '+3 months'))
-;; .join(customer, c_custkey=o_custkey)
-;; .join(lineitem.filter(l_returnflag='R'), l_orderkey=o_orderkey)
-;; .join(nation, c_nationkey=n_nationkey)
-;; .groupby({c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment}, {revenue:=sum(l_extendedprice * (1 - l_discount))})
-;; .orderby({revenue.desc()}, limit:=20)
-;; .project({c_custkey, c_name, revenue})
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Code:
@@ -87,15 +72,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defvar-local saneql-db nil
-  "The database connection to use for evaluating SaneQL expressions.")
+  "The database connection to use for evaluating SaneQL expressions.
+Supported:
+(sqlite \"path/to/file\")
+(csv \"path/to/file\") ;; database name is 'db',
+")
 
 (defvar-local saneql-compile-command "saneql"
   "The command to use for compiling SaneQL expressions to SQL.")
-
-(defvar-local saneql-sql-exec-command "sqlite3"
-  "The command to use for evaluating SQL. The command should accept
-a database connection string as the first argument and the SQL
-query as the second argument.")
 
 (defvar-local saneql-tempfile "/tmp/buffer.sane"
   "The temporary file to use for compiling SaneQL expressions.")
@@ -109,6 +93,52 @@ query as the second argument.")
 (defvar saneql-output-buffer-modes '(csv-mode csv-align-mode)
   "The modes to use for the output buffer.")
 
+(defvar saneql-db-file-hist nil
+  "History of previously selected databse files for `savehist`")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Establishing a database connection
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defclass saneql-db-connection () ())
+(defclass saneql-sqlite-connection (saneql-db-connection)
+  ((filename :initarg :filename)
+   (binary :initarg :binary :initform "sqlite3")))
+
+(defclass saneql-csv-connection (saneql-db-connection)
+  ((filename :initarg :filename)
+   (binary :initarg :binary :initform "sqlite3")))
+
+(setq saneql-db-type-alist
+  `((sqlite . saneql-sqlite-connection)
+    (csv . saneql-csv-connection)))
+
+(cl-defgeneric saneql--make-connection (class &rest args))
+
+(cl-defmethod saneql--make-connection ((class (subclass saneql-db-connection)) &rest args)
+  (user-error "connection type for %s not defined!" class))
+
+(cl-defmethod saneql--make-connection ((class (subclass saneql-sqlite-connection)) &rest args)
+  (let ((filename (read-file-name "db file: " nil saneql-db-file-hist t)))
+    (add-to-list 'saneql-db-file-hist filename)
+    (if prefix-arg
+        (saneql-sqlite-connection :filename filename
+                                  :binary (completing-read "sqlite binary: " '()))
+        (saneql-sqlite-connection :filename filename))))
+
+(defun saneql-set-db (db-type &optional connection-args)
+  (interactive (list (completing-read "connection type: "
+                                      (mapcar #'car saneql-db-type-alist))))
+  (let* ((class (alist-get (intern db-type) saneql-db-type-alist))
+         (db-instance (saneql--make-connection class)))
+    (setq-local saneql-db db-instance)
+    (add-file-local-variable-prop-line 'saneql-db db-instance)
+    db-instance))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Running a buffer
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defun saneql--compile-buffer (up-to-point)
   (let ((inhibit-message t)
         (saved-point (point))
@@ -118,30 +148,43 @@ query as the second argument.")
       (setq end (point))
       (goto-char saved-point))
     (write-region (point-min) end saneql-tempfile nil nil nil nil))
-  (let ((compilation-buf (get-buffer-create saneql-compilation-buffer-name t)))
+  (let ((compilation-buf (get-buffer-create saneql-compilation-buffer-name)))
     (with-current-buffer compilation-buf
       (erase-buffer)
       (call-process saneql-compile-command nil t nil saneql-tempfile))
     compilation-buf))
 
+(defun saneql--query-csv (db output-buffer)
+  (user-error "CSV support not implemented yet"))
+
+(defun saneql--query-sqlite (db output-buffer)
+  (call-process-region (point-min) (point-max) saneql-sql-exec-command
+                       ;; TODO make less sqlite specific
+                       nil output-buffer nil "-cmd" ".headers on" "-cmd" ".separator ," "-cmd" ".read '|cat -'"
+                       (expand-file-name (format "%s" db))))
+
+(defun saneql--query-database (db output-buffer)
+  (let ((type (car db)))
+    (cond
+     ((eq type :sqlite) (saneql--query-sqlite (cadr db) output-buffer))
+     ((eq type :csv) (saneql--query-csv (cadr db) output-buffer)))))
+
 (defun saneql--exec-sql-buffer (db buffer)
   (let ((output-buf (get-buffer-create saneql-output-buffer-name)))
     (with-current-buffer output-buf (erase-buffer))
     (with-current-buffer buffer
-    (message "db %s buffer %s out %s" db buffer output-buf)
-      (call-process-region (point-min) (point-max) saneql-sql-exec-command
-                           ;; TODO make less sqlite specific
-                           nil output-buf nil "-cmd" ".headers on" "-cmd" ".separator ," "-cmd" ".read '|cat -'"
-                           (expand-file-name (format "%s" db))))
-    output-buf))
+      (saneql--query-database
+       db
+       output-buf)
+    output-buf)))
 
 (defun saneql-compile-and-run-buffer (up-to-point)
   (interactive "P")
-  (let* ((db saneql-db)
-        (result-buf (saneql--exec-sql-buffer db (saneql--compile-buffer up-to-point))))
+  (let* ((db (or saneql-db (call-interactively #'saneql-set-db)) )
+         (result-buf (saneql--exec-sql-buffer db (saneql--compile-buffer up-to-point))))
     (with-current-buffer result-buf
-        (mapc #'funcall saneql-output-buffer-modes)
-        (goto-char (point-min)))
+      (mapc #'funcall saneql-output-buffer-modes)
+      (goto-char (point-min)))
     (pop-to-buffer result-buf)))
 
 (defvar saneql-mode-map
@@ -154,12 +197,27 @@ query as the second argument.")
 ;; Mode Definition
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;;;###autoload
 (define-derived-mode saneql-mode prog-mode "SaneQL"
   "Major mode for editing SaneQL files."
   (setq-local comment-start "--")
   (setq-local comment-end "")
   (setq-local font-lock-defaults '((saneql-font-lock-keywords)))
-  (use-local-map saneql-mode-map))
+  (use-local-map saneql-mode-map)
+
+  (if (bound-and-true-p savehist-loaded)
+      (add-to-list 'savehist-additional-variables 'saneql--database-file-hist)
+    (add-hook 'savehist-mode-hook
+              (lambda ()
+                (add-to-list 'savehist-additional-variables 'saneql--database-file-hist)))))
+
+;;;###autoload
+(progn
+  (add-to-list 'auto-mode-alist '("\\.sane\\'" . saneql-mode))
+  (add-to-list 'auto-mode-alist '("\\.saneql\\'" . saneql-mode))
+
+
+  )
 
 (provide 'saneql)
 ;;; saneql.el ends here
