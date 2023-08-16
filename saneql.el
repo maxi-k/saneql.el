@@ -192,6 +192,9 @@ output buffer afterwards."
     (modify-syntax-entry ?\n "> b" st)
     ;; strings with single quotes
     (modify-syntax-entry ?' "\"" st)
+    ;; make sure we don't treat _ as a word separator so that for example
+    ;; 'c_count' does not highlight 'count' as a keyword
+    (modify-syntax-entry ?_ "w" st)
     st)
   "Syntax table for `saneql-mode'.
 Automatically discovered by `define-derived-mode' due to its name.")
