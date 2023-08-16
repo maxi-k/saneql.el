@@ -19,6 +19,10 @@
 ;;
 ;;; Code:
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Syntax Highlighting
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defvar saneql-font-lock-keywords
   (let* (
          (keywords '("let" "defun" "null" "true" "false" "table" "&&" "||"))
@@ -46,10 +50,92 @@
       (,free-fns-regexp . 'font-lock-function-name-face)))
   "Keyword highlighting specification for `saneql-mode'.")
 
+(defvar saneql-mode-syntax-table
+  (let ((st (make-syntax-table)))
+    ;; Comments
+    (modify-syntax-entry ?- ". 12b" st)
+    (modify-syntax-entry ?\n "> b" st)
+    st)
+  "Syntax table for `saneql-mode'.")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Commands & Keybindings
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defvar-local saneql-db nil
+  "The database connection to use for evaluating SaneQL expressions.")
+
+(defvar-local saneql-compile-command "saneql"
+  "The command to use for compiling SaneQL expressions to SQL.")
+
+(defvar-local saneql-sql-exec-command "sqlite3"
+  "The command to use for evaluating SQL. The command should accept
+a database connection string as the first argument and the SQL
+query as the second argument.")
+
+(defvar-local saneql-tempfile "/tmp/buffer.sane"
+  "The temporary file to use for compiling SaneQL expressions.")
+
+(defvar saneql-compilation-buffer-name "*saneql-compilation*"
+  "The name of the buffer to use for storing compiled SQL.")
+
+(defvar saneql-output-buffer-name "*saneql-output*"
+  "The name of the buffer to use for displaying SaneQL output.")
+
+(defvar saneql-output-buffer-modes '(csv-mode csv-align-mode)
+  "The modes to use for the output buffer.")
+
+(defun saneql--compile-buffer (up-to-point)
+  (let ((inhibit-message t)
+        (saved-point (point))
+        (end (point-max)))
+    (when up-to-point
+      (move-end-of-line nil)
+      (setq end (point))
+      (goto-char saved-point))
+    (write-region (point-min) end saneql-tempfile nil nil nil nil))
+  (let ((compilation-buf (get-buffer-create saneql-compilation-buffer-name t)))
+    (with-current-buffer compilation-buf
+      (erase-buffer)
+      (call-process saneql-compile-command nil t nil saneql-tempfile))
+    compilation-buf))
+
+(defun saneql--exec-sql-buffer (db buffer)
+  (let ((output-buf (get-buffer-create saneql-output-buffer-name)))
+    (with-current-buffer output-buf (erase-buffer))
+    (with-current-buffer buffer
+    (message "db %s buffer %s out %s" db buffer output-buf)
+      (call-process-region (point-min) (point-max) saneql-sql-exec-command
+                           ;; TODO make less sqlite specific
+                           nil output-buf nil "-cmd" ".headers on" "-cmd" ".separator ," "-cmd" ".read '|cat -'"
+                           (expand-file-name (format "%s" db))))
+    output-buf))
+
+(defun saneql-compile-and-run-buffer (up-to-point)
+  (interactive "P")
+  (let* ((db saneql-db)
+        (result-buf (saneql--exec-sql-buffer db (saneql--compile-buffer up-to-point))))
+    (with-current-buffer result-buf
+        (mapc #'funcall saneql-output-buffer-modes)
+        (goto-char (point-min)))
+    (pop-to-buffer result-buf)))
+
+(defvar saneql-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'saneql-compile-and-run-buffer)
+    map)
+  "Keymap for `saneql-mode'.")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Mode Definition
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (define-derived-mode saneql-mode prog-mode "SaneQL"
   "Major mode for editing SaneQL files."
   (setq-local comment-start "--")
-  (setq-local font-lock-defaults '((saneql-font-lock-keywords))))
+  (setq-local comment-end "")
+  (setq-local font-lock-defaults '((saneql-font-lock-keywords)))
+  (use-local-map saneql-mode-map))
 
 (provide 'saneql)
 ;;; saneql.el ends here
