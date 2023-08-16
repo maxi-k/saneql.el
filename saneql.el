@@ -176,10 +176,8 @@ output buffer afterwards."
          (scalar-fns-regexp (regexp-opt scalar-fns 'words))
          (free-fns-regexp (regexp-opt free-fns 'words))
          (types-regexp (regexp-opt types 'words))
-         (constants-regexp (regexp-opt constants 'words))
-         (string-regexp "'\\([^']*\\)'"))
-    `((,string-regexp . 'font-lock-string-face)
-      (,keywords-regexp . 'font-lock-keyword-face)
+         (constants-regexp (regexp-opt constants 'words)))
+    `((,keywords-regexp . 'font-lock-keyword-face)
       (,types-regexp . 'font-lock-type-face)
       (,constants-regexp . 'font-lock-constant-face)
       (,table-fns-regexp . 'font-lock-builtin-face)
@@ -192,8 +190,11 @@ output buffer afterwards."
     ;; Comments
     (modify-syntax-entry ?- ". 12b" st)
     (modify-syntax-entry ?\n "> b" st)
+    ;; strings with single quotes
+    (modify-syntax-entry ?' "\"" st)
     st)
-  "Syntax table for `saneql-mode'.")
+  "Syntax table for `saneql-mode'.
+Automatically discovered by `define-derived-mode' due to its name.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Mode Definition and Keymap 
@@ -222,10 +223,7 @@ output buffer afterwards."
 ;;;###autoload
 (progn
   (add-to-list 'auto-mode-alist '("\\.sane\\'" . saneql-mode))
-  (add-to-list 'auto-mode-alist '("\\.saneql\\'" . saneql-mode))
-
-
-  )
+  (add-to-list 'auto-mode-alist '("\\.saneql\\'" . saneql-mode)))
 
 (provide 'saneql)
 ;;; saneql.el ends here
