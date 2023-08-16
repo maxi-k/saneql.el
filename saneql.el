@@ -15,8 +15,32 @@
 ;;
 ;;; Commentary:
 ;;
-;;  Description
+;;  Description:
 ;;
+;; Major mode for editing SaneQL files. See github.com/neumannt/saneql for more information on the language.
+;;
+;; Mode Features:
+;;
+;; - C-c C-c compiles the buffer, runs the given sql against the database and displays the output in a new buffer
+;; - C-u C-c C-c compiles and runs the buffer up to the current line
+;;
+;;  Example Buffer:
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; saneql-db: ~/dev/tpch-sqlite/tpch.db -*-
+;; -- the above line sets the input database for evaluation
+;; let base := '1993-10-01',
+;; let basedate(add := '+0 seconds') := foreigncall('date', date, {base, add}),
+;; orders
+;; .filter(o_orderdate >= basedate() && o_orderdate < basedate(add := '+3 months'))
+;; .join(customer, c_custkey=o_custkey)
+;; .join(lineitem.filter(l_returnflag='R'), l_orderkey=o_orderkey)
+;; .join(nation, c_nationkey=n_nationkey)
+;; .groupby({c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment}, {revenue:=sum(l_extendedprice * (1 - l_discount))})
+;; .orderby({revenue.desc()}, limit:=20)
+;; .project({c_custkey, c_name, revenue})
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Code:
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
