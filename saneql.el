@@ -7,8 +7,8 @@
 ;; Created: August 16, 2023
 ;; Modified: August 16, 2023
 ;; Version: 0.0.1
-;; Keywords: data languages
-;; Homepage: https://github.com/maxi/saneql
+;; Keywords: data languages database
+;; Homepage: https://github.com/maxi-k/saneql
 ;; Package-Requires: ((emacs "25.1"))
 ;;
 ;; This file is not part of GNU Emacs.
@@ -24,8 +24,6 @@
 ;; - C-c C-c compiles the buffer, runs the given sql against the database and displays the output in a new buffer
 ;; - C-u C-c C-c compiles and runs the buffer up to the current line
 ;;
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Code:
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -74,12 +72,12 @@ Use `saneql-set-db' to set this variable")
   `((sqlite . saneql-sqlite-connection)
     (csv . saneql-csv-connection)))
 
-(cl-defgeneric saneql--make-connection (class &rest args))
+(defgeneric saneql--make-connection (class &rest args))
 
-(cl-defmethod saneql--make-connection ((class (subclass saneql-db-connection)) &rest args)
+(defmethod saneql--make-connection ((class (subclass saneql-db-connection)) &rest args)
   (user-error "connection type for %s not defined!" class))
 
-(cl-defmethod saneql--make-connection ((class (subclass saneql-sqlite-connection)) &rest args)
+(defmethod saneql--make-connection ((class (subclass saneql-sqlite-connection)) &rest args)
   (let ((filename (read-file-name "db file: " nil saneql-db-file-hist t)))
     (add-to-list 'saneql-db-file-hist filename)
     (if prefix-arg
