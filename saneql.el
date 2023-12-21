@@ -72,6 +72,10 @@ Use `saneql-set-db' to set this variable")
 (defvar saneql-sqlite-default-binary "sqlite3"
   "The default sqlite binary to use if none is specified.")
 
+;;; csv-specific options
+(defvar saneql-csv-default-binary "duckdb"
+  "The default database binary to use for csv files. Note: currently uses duckdb-specific csv syntax internally.")
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Establishing a database connection
@@ -92,7 +96,7 @@ Use `saneql-set-db' to set this variable")
 
 (setq saneql-db-type-alist
   `((sqlite . saneql-sqlite-connection)
-    ;;(csv . saneql-csv-connection)
+    (csv . saneql-csv-connection)
     (duckdb . saneql-duckdb-connection)))
 
 (cl-defgeneric saneql--make-connection (class &rest args)
@@ -122,6 +126,16 @@ Use `saneql-set-db' to set this variable")
         (saneql-duckdb-connection :filename filename
                                   :binary saneql-duckdb-default-binary))))
 
+(cl-defmethod saneql--make-connection ((class (subclass saneql-csv-connection)) &rest args)
+  "Create a new duckdb connection instance."
+  (let ((filename (read-file-name "db file: " nil saneql-db-file-hist saneql-db-file-must-exist-p)))
+    (add-to-list 'saneql-db-file-hist filename)
+    (if prefix-arg
+        (saneql-csv-connection :filename filename
+                               :binary (completing-read "database binary: " '()))
+        (saneql-csv-connection :filename filename
+                               :binary saneql-csv-default-binary))))
+
 (defun saneql-set-db (db-type &optional connection-args)
   "Interactively set the database connection to use for evaluating SaneQL expressions."
   (interactive (list (completing-read "connection type: "
@@ -148,6 +162,11 @@ Use `saneql-set-db' to set this variable")
   "DuckDB supports native SaneQL evaluation if the extension is installed."
   saneql-duckdb-has-extension-p)
 
+(cl-defmethod saneql--db-native-saneql-support ((db saneql-csv-connection))
+  "DuckDB supports native SaneQL evaluation if the extension is installed."
+  (and saneql-duckdb-has-extension-p
+       (s-contains-p "duckdb" (oref db :binary))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Query a database 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -168,9 +187,21 @@ db connection instance to query the database and write the result to the output 
   "Execute the current buffer as sql against the given duckdb database and write the result to the output buffer."
   (with-slots (filename binary) db
     (call-process-region (point-min) (point-max) (or binary saneql-duckdb-default-binary)
-                         nil output-buffer nil "-cmd" ".headers on" "-cmd" ".mode csv" "-cmd" ".separator ,"
+                         nil output-buffer nil "-header" "-csv" "-cmd" ".separator ,"
                          (if (or (not filename) (eq filename "") (eq filename ":memory:")) nil (expand-file-name (format "%s" filename))))))
 
+(cl-defmethod saneql--query-database ((db saneql-csv-connection) output-buffer)
+  "Execute the current buffer as sql against the given csv file and write the result to the output buffer. The csv table is called 'db'"
+  (with-slots (filename binary) db
+    (let ((csv-read-str
+           (let ((text-quoting-style 'straight))
+             (format "create table db as (select * from read_csv_auto('%s'))"
+                     (expand-file-name (format "%s" filename))))))
+      (message csv-read-str)
+      (call-process-region (point-min) (point-max) (or binary saneql-csv-default-binary)
+                           nil output-buffer nil
+                           "-header" "-csv" "-cmd" ".separator ,"
+                           "-cmd" csv-read-str))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Compling and running a buffer 
