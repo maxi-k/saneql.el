@@ -197,7 +197,7 @@ db connection instance to query the database and write the result to the output 
            (let ((text-quoting-style 'straight))
              (format "create table db as (select * from read_csv_auto('%s'))"
                      (expand-file-name (format "%s" filename))))))
-      (message csv-read-str)
+      ;; (message csv-read-str)
       (call-process-region (point-min) (point-max) (or binary saneql-csv-default-binary)
                            nil output-buffer nil
                            "-header" "-csv" "-cmd" ".separator ,"
@@ -265,6 +265,8 @@ output buffer afterwards."
     (with-current-buffer result-buf
       (mapc #'funcall saneql-output-buffer-modes)
       (goto-char (point-min)))
+    (unless (get-buffer-window result-buf)
+      (display-buffer result-buf))
     (when saneql-output-pop-to-buffer-p
       (pop-to-buffer result-buf))))
 
