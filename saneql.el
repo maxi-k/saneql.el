@@ -246,7 +246,7 @@ output buffer afterwards."
          (keywords '("let" "defun" "null" "true" "false" "table" "&&" "||"))
          (table-fns '("filter" "join" "groupby" "aggregate" "distinct" "orderby" "map" "project" "projectout" "as" "alias" "union" "except" "intersect" "window"))
          (scalar-fns '("asc" "desc" "collate" "is" "between" "in" "like" "substr" "extract"))
-         (free-fns '("count" "sum" "avg" "min" "max" "row_number" "table" "case" "gensym" "foreigncall"))
+         (free-fns '("count" "sum" "avg" "min" "max" "row_number" "lead" "lag" "first_row" "last_row" "rank" "dense_rank" "ntile" "table" "case" "gensym" "foreigncall"))
          (types '("integer" "boolean" "date" "interval" "text"))
          (constants '("function" "leftassoc" "rightassoc" "operator"
                       "inner" "left" "leftouter" "right" "rightouter" "full"
