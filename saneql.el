@@ -46,14 +46,32 @@ Use `saneql-set-db' to set this variable")
 (defvar saneql-output-buffer-name "*saneql-output*"
   "The name of the buffer to use for displaying SaneQL output.")
 
+(defvar saneql-output-pop-to-buffer-p nil
+  "Whether to pop to the output buffer after running a query.")
+
 (defvar saneql-output-buffer-modes '(csv-mode csv-align-mode)
   "The modes to use for the output buffer.")
 
-(defvar saneql-set-db-file-var-p t
+(defvar saneql-set-db-file-var-p nil
   "Whether to set the `saneql-db' file local variable when setting the database.")
 
 (defvar saneql-db-file-hist nil
   "History of previously selected databse files for `savehist`.")
+
+(defvar saneql-db-file-must-exist-p nil
+  "Whether the database file must exist when setting the database interactively.")
+
+;;; duckdb-specific options
+(defvar saneql-duckdb-has-extension-p t
+  "Whether the duckdb saneql extension is compiled into the duckdb binary.")
+
+(defvar saneql-duckdb-default-binary "duckdb"
+  "The default duckdb binary to use if none is specified.")
+
+;;; sqlite-specific options
+(defvar saneql-sqlite-default-binary "sqlite3"
+  "The default sqlite binary to use if none is specified.")
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Establishing a database connection
@@ -62,30 +80,50 @@ Use `saneql-set-db' to set this variable")
 (defclass saneql-db-connection () ())
 (defclass saneql-sqlite-connection (saneql-db-connection)
   ((filename :initarg :filename)
-   (binary :initarg :binary :initform "sqlite3")))
+   (binary :initarg :binary)))
+
+(defclass saneql-duckdb-connection (saneql-db-connection)
+  ((filename :initarg :filename)
+   (binary :initarg :binary)))
 
 (defclass saneql-csv-connection (saneql-db-connection)
   ((filename :initarg :filename)
-   (binary :initarg :binary :initform "sqlite3")))
+   (binary :initarg :binary)))
 
 (setq saneql-db-type-alist
   `((sqlite . saneql-sqlite-connection)
-    (csv . saneql-csv-connection)))
+    ;;(csv . saneql-csv-connection)
+    (duckdb . saneql-duckdb-connection)))
 
-(defgeneric saneql--make-connection (class &rest args))
+(cl-defgeneric saneql--make-connection (class &rest args)
+  "Create a new database connection instance of the given class.")
 
-(defmethod saneql--make-connection ((class (subclass saneql-db-connection)) &rest args)
+(cl-defmethod saneql--make-connection ((class (subclass saneql-db-connection)) &rest args)
+  "Default implementation for `saneql--make-connection' that throws an error."
   (user-error "connection type for %s not defined!" class))
 
-(defmethod saneql--make-connection ((class (subclass saneql-sqlite-connection)) &rest args)
-  (let ((filename (read-file-name "db file: " nil saneql-db-file-hist t)))
+(cl-defmethod saneql--make-connection ((class (subclass saneql-sqlite-connection)) &rest args)
+  "Create a new sqlite connection instance."
+  (let ((filename (read-file-name "db file: " nil saneql-db-file-hist saneql-db-file-must-exist-p)))
     (add-to-list 'saneql-db-file-hist filename)
     (if prefix-arg
         (saneql-sqlite-connection :filename filename
                                   :binary (completing-read "sqlite binary: " '()))
-        (saneql-sqlite-connection :filename filename))))
+        (saneql-sqlite-connection :filename filename
+                                  :binary saneql-sqlite-default-binary))))
+
+(cl-defmethod saneql--make-connection ((class (subclass saneql-duckdb-connection)) &rest args)
+  "Create a new duckdb connection instance."
+  (let ((filename (read-file-name "db file: " nil saneql-db-file-hist saneql-db-file-must-exist-p)))
+    (add-to-list 'saneql-db-file-hist filename)
+    (if prefix-arg
+        (saneql-duckdb-connection :filename filename
+                                  :binary (completing-read "duckdb binary: " '()))
+        (saneql-duckdb-connection :filename filename
+                                  :binary saneql-duckdb-default-binary))))
 
 (defun saneql-set-db (db-type &optional connection-args)
+  "Interactively set the database connection to use for evaluating SaneQL expressions."
   (interactive (list (completing-read "connection type: "
                                       (mapcar #'car saneql-db-type-alist))))
   (let* ((class (alist-get (intern db-type) saneql-db-type-alist))
@@ -96,19 +134,42 @@ Use `saneql-set-db' to set this variable")
     db-instance))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Database-specific settings 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(cl-defgeneric saneql--db-native-saneql-support (db)
+  "Return whether the given database supports native SaneQL evaluation.")
+
+(cl-defmethod saneql--db-native-saneql-support ((db saneql-sqlite-connection))
+  "Sqlite does not support native SaneQL evaluation."
+  nil)
+
+(cl-defmethod saneql--db-native-saneql-support ((db saneql-duckdb-connection))
+  "DuckDB supports native SaneQL evaluation if the extension is installed."
+  saneql-duckdb-has-extension-p)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Query a database 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defgeneric saneql--query-database (db output-buffer)
+(cl-defgeneric saneql--query-database (db output-buffer)
   "Assuming `current-buffer' contains a sql query, use the given
 db connection instance to query the database and write the result to the output buffer.")
 
-(defmethod saneql--query-database ((db saneql-sqlite-connection) output-buffer)
+(cl-defmethod saneql--query-database ((db saneql-sqlite-connection) output-buffer)
+  "Execute the current buffer as sql against the given sqlite database and write the result to the output buffer."
   (with-slots (filename binary) db
-    (call-process-region (point-min) (point-max) binary
+    (call-process-region (point-min) (point-max) (or  binary saneql-sqlite-default-binary)
                          ;; TODO make less sqlite specific
                          nil output-buffer nil "-cmd" ".headers on" "-cmd" ".separator ," "-cmd" ".read '|cat -'"
-                         (expand-file-name (format "%s" filename)))))
+                         (if (or (not filename) (eq filename "") (eq filename ":memory:")) nil (expand-file-name (format "%s" filename))))))
+
+(cl-defmethod saneql--query-database ((db saneql-duckdb-connection) output-buffer)
+  "Execute the current buffer as sql against the given duckdb database and write the result to the output buffer."
+  (with-slots (filename binary) db
+    (call-process-region (point-min) (point-max) (or binary saneql-duckdb-default-binary)
+                         nil output-buffer nil "-cmd" ".headers on" "-cmd" ".mode csv" "-cmd" ".separator ,"
+                         (if (or (not filename) (eq filename "") (eq filename ":memory:")) nil (expand-file-name (format "%s" filename))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -133,6 +194,23 @@ If UP-TO-POINT is non-nil, only compile up to the current line."
       (call-process saneql-compile-command nil t nil saneql-tempfile))
     compilation-buf))
 
+(defun saneql--copy-buffer (up-to-point)
+  "Copy the current buffer up to the given point to a compilation buffer and return it."
+  (let ((inhibit-message t)
+        (saved-point (point))
+        (start (point-min))
+        (end (point-max))
+        (buf (current-buffer)))
+    (when up-to-point
+      (move-end-of-line nil)
+      (setq end (point))
+      (goto-char saved-point))
+    (let ((compilation-buf (get-buffer-create saneql-compilation-buffer-name)))
+      (with-current-buffer compilation-buf
+        (erase-buffer)
+        (insert-buffer-substring buf start end))
+      compilation-buf)))
+
 (defun saneql--exec-sql-buffer (db buffer)
   "Execute the given sql buffer against the given database and return the result buffer."
   (let ((output-buf (get-buffer-create saneql-output-buffer-name)))
@@ -150,11 +228,14 @@ If no database connection is set, prompt for one. Switches to the
 output buffer afterwards."
   (interactive "P")
   (let* ((db (or saneql-db (call-interactively #'saneql-set-db)) )
-         (result-buf (saneql--exec-sql-buffer db (saneql--compile-buffer up-to-point))))
+         (result-buf (if (saneql--db-native-saneql-support db)
+                         (saneql--exec-sql-buffer db (saneql--copy-buffer up-to-point))
+                       (saneql--exec-sql-buffer db (saneql--compile-buffer up-to-point)))))
     (with-current-buffer result-buf
       (mapc #'funcall saneql-output-buffer-modes)
       (goto-char (point-min)))
-    (pop-to-buffer result-buf)))
+    (when saneql-output-pop-to-buffer-p
+      (pop-to-buffer result-buf))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Syntax Highlighting 
