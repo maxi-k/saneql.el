@@ -76,6 +76,10 @@ Use `saneql-set-db' to set this variable")
 (defvar saneql-csv-default-binary "duckdb"
   "The default database binary to use for csv files. Note: currently uses duckdb-specific csv syntax internally.")
 
+(defvar saneql-here-db-map
+  '((csv-mode . csv))
+  "Alist mapping major modes to database types for `saneql-here'.")
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Establishing a database connection
@@ -99,6 +103,34 @@ Use `saneql-set-db' to set this variable")
     (csv . saneql-csv-connection)
     (duckdb . saneql-duckdb-connection)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(cl-defgeneric saneql--fill-defaults (db)
+  "Fill in default values for the given database connection instance.")
+
+(cl-defmethod saneql--fill-defaults ((db saneql-sqlite-connection))
+  "Fill in default values for the given sqlite database connection instance.
+Return the db instance."
+  (unless (and (slot-boundp db :binary) (oref db :binary))
+    (oset db :binary saneql-sqlite-default-binary))
+  db)
+
+(cl-defmethod saneql--fill-defaults ((db saneql-duckdb-connection))
+  "Fill in default values for the given duckdb database connection instance.
+Return the db instance."
+  (unless (and (slot-boundp db :binary) (oref db :binary))
+    (oset db :binary saneql-duckdb-default-binary))
+  db)
+
+(cl-defmethod saneql--fill-defaults ((db saneql-csv-connection))
+  "Fill in default values for the given csv database connection instance.
+Return the db instance."
+  (unless (and (slot-boundp db :binary) (oref db :binary))
+    (oset db :binary saneql-csv-default-binary))
+  db)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (cl-defgeneric saneql--make-connection (class &rest args)
   "Create a new database connection instance of the given class.")
 
@@ -113,8 +145,7 @@ Use `saneql-set-db' to set this variable")
     (if prefix-arg
         (saneql-sqlite-connection :filename filename
                                   :binary (completing-read "sqlite binary: " '()))
-        (saneql-sqlite-connection :filename filename
-                                  :binary saneql-sqlite-default-binary))))
+      (saneql--fill-defaults (saneql-sqlite-connection :filename filename)))))
 
 (cl-defmethod saneql--make-connection ((class (subclass saneql-duckdb-connection)) &rest args)
   "Create a new duckdb connection instance."
@@ -123,8 +154,7 @@ Use `saneql-set-db' to set this variable")
     (if prefix-arg
         (saneql-duckdb-connection :filename filename
                                   :binary (completing-read "duckdb binary: " '()))
-        (saneql-duckdb-connection :filename filename
-                                  :binary saneql-duckdb-default-binary))))
+      (saneql--fill-defaults (saneql-duckdb-connection :filename filename)))))
 
 (cl-defmethod saneql--make-connection ((class (subclass saneql-csv-connection)) &rest args)
   "Create a new duckdb connection instance."
@@ -133,8 +163,9 @@ Use `saneql-set-db' to set this variable")
     (if prefix-arg
         (saneql-csv-connection :filename filename
                                :binary (completing-read "database binary: " '()))
-        (saneql-csv-connection :filename filename
-                               :binary saneql-csv-default-binary))))
+      (saneql--fill-defaults (saneql-csv-connection :filename filename)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun saneql-set-db (db-type &optional connection-args)
   "Interactively set the database connection to use for evaluating SaneQL expressions."
@@ -142,6 +173,17 @@ Use `saneql-set-db' to set this variable")
                                       (mapcar #'car saneql-db-type-alist))))
   (let* ((class (alist-get (intern db-type) saneql-db-type-alist))
          (db-instance (saneql--make-connection class)))
+    (setq-local saneql-db db-instance)
+    (when saneql-set-db-file-var-p
+      (add-file-local-variable-prop-line 'saneql-db db-instance))
+    db-instance))
+
+(defun saneql--set-db-directly (db-type &optional connection-args)
+  "Set the database connection to use for evaluating SaneQL expressions.
+Do not use --make-connection functions (which query for user input), but construct
+the class directly."
+  (let* ((class (alist-get (if (symbolp db-type) db-type (intern db-type)) saneql-db-type-alist))
+         (db-instance (saneql--fill-defaults (apply #'make-instance class connection-args))))
     (setq-local saneql-db db-instance)
     (when saneql-set-db-file-var-p
       (add-file-local-variable-prop-line 'saneql-db db-instance))
@@ -269,6 +311,30 @@ output buffer afterwards."
       (display-buffer result-buf))
     (when saneql-output-pop-to-buffer-p
       (pop-to-buffer result-buf))))
+
+(defun saneql-here ()
+  "Open a saneql buffer for the current buffer.
+If the current buffer is not in a supported mode (see `saneql-here-mode-map'),
+query for a file."
+  (interactive)
+  (let ((db-type (alist-get major-mode saneql-here-db-map))
+        (source-file (buffer-file-name))
+        (short-name (buffer-name)))
+    (unless db-type  ;; current buffer not in a supported mode
+      (setq source-file (read-file-name "input file: " nil saneql-db-file-hist saneql-db-file-must-exist-p))
+      (save-excursion
+        (find-file source-file)
+        (setq db-type (alist-get major-mode saneql-here-db-map))
+        (setq short-name (buffer-name))
+        (unless db-type
+          (user-error "no database type for mode %s" major-mode))))
+    ;; create new *saneql* buffer and set saneql-db
+    (let ((buf (get-buffer-create (format "*saneql: %s*" short-name))))
+      (with-current-buffer buf
+        (saneql-mode)
+        (saneql--set-db-directly db-type (list :filename source-file))
+        (goto-char (point-min)))
+      (pop-to-buffer buf))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Syntax Highlighting 
