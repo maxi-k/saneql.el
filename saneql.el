@@ -25,6 +25,8 @@
 ;; - C-u C-c C-c compiles and runs the buffer up to the current line
 ;;
 ;;; Code:
+(require 'eieio)
+(require 'cl-generic)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Exposed options
@@ -104,6 +106,11 @@ Use `saneql-set-db' to set this variable")
     (duckdb . saneql-duckdb-connection)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Fill empty slots with default values for a database connection instance.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Not using the :initform slot option because we want to be able to override
+;; the default values in the user's init file.
 
 (cl-defgeneric saneql--fill-defaults (db)
   "Fill in default values for the given database connection instance.")
@@ -129,6 +136,8 @@ Return the db instance."
     (oset db :binary saneql-csv-default-binary))
   db)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Interactively create a database connection instance, querying for user input
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (cl-defgeneric saneql--make-connection (class &rest args)
@@ -345,7 +354,9 @@ query for a file."
          (keywords '("let" "defun" "null" "true" "false" "table" "&&" "||"))
          (table-fns '("filter" "join" "groupby" "aggregate" "distinct" "orderby" "map" "project" "projectout" "as" "alias" "union" "except" "intersect" "window"))
          (scalar-fns '("asc" "desc" "collate" "is" "between" "in" "like" "substr" "extract"))
-         (free-fns '("count" "sum" "avg" "min" "max" "row_number" "lead" "lag" "first_row" "last_row" "rank" "dense_rank" "ntile" "table" "case" "gensym" "foreigncall"))
+         (free-fns '("count" "sum" "avg" "min" "max"
+                     "row_number" "lead" "lag" "first_row" "last_row" "rank" "dense_rank" "ntile"
+                     "table" "case" "gensym" "foreigncall"))
          (types '("integer" "boolean" "date" "interval" "text"))
          (constants '("function" "leftassoc" "rightassoc" "operator"
                       "inner" "left" "leftouter" "right" "rightouter" "full"
