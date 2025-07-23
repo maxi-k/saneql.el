@@ -82,6 +82,10 @@ Use `saneql-set-db' to set this variable")
   '((csv-mode . csv))
   "Alist mapping major modes to database types for `saneql-here'.")
 
+(defvar saneql-here-extension-map
+  '(("duckdb" . duckdb))
+  "Alist mapping file extensions to database types for `saneql-here'.")
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Establishing a database connection
@@ -331,12 +335,17 @@ query for a file."
         (short-name (buffer-name)))
     (unless db-type  ;; current buffer not in a supported mode
       (setq source-file (read-file-name "input file: " nil saneql-db-file-hist saneql-db-file-must-exist-p))
-      (save-excursion
-        (find-file source-file)
-        (setq db-type (alist-get major-mode saneql-here-db-map))
-        (setq short-name (buffer-name))
-        (unless db-type
-          (user-error "no database type for mode %s" major-mode))))
+      (if-let* ((extension (file-name-extension source-file))
+                (found-db-type (alist-get extension saneql-here-extension-map nil nil #'string-equal)))
+          (progn
+            (setq db-type found-db-type)
+            (setq short-name (file-name-base source-file)))
+        (save-excursion
+          (find-file source-file)
+          (setq db-type (alist-get major-mode saneql-here-db-map))
+          (setq short-name (buffer-name))
+          (unless db-type
+            (user-error "no database type for mode %s" major-mode)))))
     ;; create new *saneql* buffer and set saneql-db
     (let ((buf (get-buffer-create (format "*saneql: %s*" short-name))))
       (with-current-buffer buf
@@ -397,6 +406,7 @@ Automatically discovered by `define-derived-mode' due to its name.")
 (defvar saneql-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'saneql-compile-and-run-buffer)
+    (define-key map (kbd "C-RET") #'saneql-compile-and-run-buffer)
     map)
   "Keymap for `saneql-mode'.")
 
